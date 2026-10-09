@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yejian-chat-bridge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": true,
+  "vars": {
+    "PUBLIC_ORIGIN": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev",
+    "OWNER_GITHUB_LOGIN": "YOUR_GITHUB_LOGIN",
+    "CALLBACK_HOSTS": "chatgpt.com,openai.com",
+    "SUBSCRIPTION_TTL_SECONDS": "86400"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "yejian-chat",
+      "database_id": "YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "YOUR_OAUTH_KV_NAMESPACE_ID"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

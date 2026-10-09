@@ -1,0 +1,126 @@
+import Foundation
+import OnnxRuntimeBindings
+
+/// tools/export_pack.py 写出的 .gsvpack 数据包，格式说明见那个脚本的开头。
+struct TensorPack {
+    struct Entry: Codable {
+        let name: String
+        let dtype: String
+        let shape: [Int]
+        let offset: Int
+        let length: Int
+    }
+
+    private struct Header: Codable {
+        let kind: String
+        let meta: [String: String]
+        let tensors: [Entry]
+    }
+
+    /// 要写进数据包的一个张量。`dtype` 是 "i64" 或 "f32"，`data` 是小端的原始字节。
+    struct Tensor {
+        let name: String
+        let dtype: String
+        let shape: [Int]
+        let data: Data
+    }
+
+    enum PackError: LocalizedError {
+        case notAPack(String)
+        case missingTensor(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .notAPack(let file): return "\(file) 不是有效的数据包"
+            case .missingTensor(let name): return "数据包里缺少 \(name)"
+            }
+        }
+    }
+
+    let url: URL
+    let kind: String
+    let meta: [String: String]
+    private let entries: [String: Entry]
+    private let data: Data
+    private let blobStart: Int
+
+    init(url: URL) throws {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard data.count >= 8, data.count <= 64 * 1024 * 1024, data.prefix(4).elementsEqual("GSVP".utf8) else {
+            throw PackError.notAPack(url.lastPathComponent)
+        }
+        var headerLength = 0
+        for index in 0..<4 {
+            headerLength |= Int(data[4 + index]) << (8 * index)
+        }
+        guard headerLength > 0, headerLength <= 1024 * 1024, data.count >= 8 + headerLength else {
+            throw PackError.notAPack(url.lastPathComponent)
+        }
+        let header = try JSONDecoder().decode(Header.self, from: data.subdata(in: 8..<(8 + headerLength)))
+        guard header.tensors.count <= 100, Set(header.tensors.map(\.name)).count == header.tensors.count else { throw PackError.notAPack(url.lastPathComponent) }
+        for entry in header.tensors {
+            guard ["i64", "f32"].contains(entry.dtype), !entry.shape.isEmpty, entry.shape.count <= 8,
+                  entry.shape.allSatisfy({ $0 > 0 && $0 <= 10_000_000 }), entry.offset >= 0, entry.length > 0,
+                  entry.offset <= data.count - 8 - headerLength,
+                  entry.length <= data.count - 8 - headerLength - entry.offset else { throw PackError.notAPack(url.lastPathComponent) }
+            var count = entry.dtype == "i64" ? 8 : 4
+            for dimension in entry.shape {
+                guard count <= entry.length / dimension else { throw PackError.notAPack(url.lastPathComponent) }
+                count *= dimension
+            }
+            guard count == entry.length else { throw PackError.notAPack(url.lastPathComponent) }
+        }
+
+        self.url = url
+        self.kind = header.kind
+        self.meta = header.meta
+        self.entries = Dictionary(header.tensors.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        self.data = data
+        self.blobStart = 8 + headerLength
+    }
+
+    /// 与 tools/gsvpack.py 的 write_pack 写法相同：头部补空格，让数据区按 8 字节对齐。
+    static func write(to url: URL, kind: String, meta: [String: String], tensors: [Tensor]) throws {
+        var entries: [Entry] = []
+        var offset = 0
+        for tensor in tensors {
+            entries.append(Entry(name: tensor.name, dtype: tensor.dtype, shape: tensor.shape,
+                                 offset: offset, length: tensor.data.count))
+            offset += tensor.data.count
+        }
+        var header = try JSONEncoder().encode(Header(kind: kind, meta: meta, tensors: entries))
+        header.append(contentsOf: [UInt8](repeating: 0x20, count: (8 - (8 + header.count) % 8) % 8))
+
+        var file = Data("GSVP".utf8)
+        let length = UInt32(header.count)
+        file.append(contentsOf: (0..<4).map { UInt8((length >> (8 * $0)) & 0xFF) })
+        file.append(header)
+        for tensor in tensors {
+            file.append(tensor.data)
+        }
+        try file.write(to: url, options: .atomic)
+    }
+
+    func shape(of name: String) -> [Int] {
+        entries[name]?.shape ?? []
+    }
+    func validateVoice() throws {
+        let ref = shape(of: "ref_seq"), ssl = shape(of: "ssl_content")
+        guard kind == "voice", ["zh", "ja"].contains(meta["lang"] ?? "ja"),
+              ref.count == 2, ref[0] == 1, ref[1] <= 20_000,
+              shape(of: "ref_bert") == [ref[1], 1024], ssl.count == 3, ssl[0] == 1, ssl[1] == 768,
+              shape(of: "ge") == [1, 1024, 1], shape(of: "ge_advanced") == [1, 512, 1],
+              entries["ref_seq"]?.dtype == "i64",
+              ["ref_bert", "ssl_content", "ge", "ge_advanced"].allSatisfy({ entries[$0]?.dtype == "f32" }) else { throw PackError.notAPack(url.lastPathComponent) }
+    }
+
+    func value(_ name: String) throws -> ORTValue {
+        guard let entry = entries[name], entry.offset >= 0, entry.length > 0, entry.offset <= data.count - blobStart, entry.length <= data.count - blobStart - entry.offset else {
+            throw PackError.missingTensor(name)
+        }
+        let start = blobStart + entry.offset
+        let bytes = NSMutableData(data: data.subdata(in: start..<(start + entry.length)))
+        let elementType: ORTTensorElementDataType = entry.dtype == "i64" ? .int64 : .float
+        return try ORTValue(tensorData: bytes, elementType: elementType, shape: entry.shape.map { NSNumber(value: $0) })
+    }
+}

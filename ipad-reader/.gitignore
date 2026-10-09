@@ -1,0 +1,9 @@
+*.xcodeproj/
+build/
+build-simulator/
+DerivedData/
+.DS_Store
+*.ipa
+*.xcarchive/
+Preview/test-results/
+Resources/Fonts/NotoSerifSC.ttf

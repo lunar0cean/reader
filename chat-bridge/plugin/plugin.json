@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "yejian-reader",
+  "version": "0.1.0",
+  "description": "订阅页间 iPad 的角色消息，读取明确共享的书摘，回传角色回复和带出处的笔记草稿。",
+  "author": { "name": "lunar0cean" },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "页间阅读伙伴",
+        "shortDescription": "角色对话、书摘解释与笔记回传",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": ["订阅我的页间会话，扮演阅读伙伴并通过插件回传回复。"]
+      }
+    }
+  }
+}

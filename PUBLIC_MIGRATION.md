@@ -1,5 +1,7 @@
 # 公开编译仓库
 
+完整中文字体按压缩小片保存于 `ipad-reader/FontSources`，云端构建自动恢复。运行网页预览或本地编译前，可执行 `python ipad-reader/tools/restore_font_resources.py` 恢复原文件。字体内容和许可证保持原样。
+
 2026-10-09 导入 10 月开发后的当前完整阅读器源代码，使用新的 Git 历史。
 
 原工作副本版本：`99f13fab609f2df3755094fa8c59cd865a112918`。

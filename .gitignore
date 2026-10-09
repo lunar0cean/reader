@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+**/node_modules/
+**/.wrangler/
+**/dist/
+**/coverage/
+**/.dev.vars
+**/.env
+**/.env.*
+!**/.env.example
+**/Voice/Japanese/target/
+**/Voice/Japanese/Cargo.lock
+**/VoiceModels/
+**/*.gsvpack
+**/*.onnx
+**/*.bin
+ipad-reader/Voice/Native/src/
+ipad-reader/Voice/Native/Cargo.toml
+
+# Restored from tracked FontSources before build.
+/ipad-reader/Preview/assets/YejianSerif-Regular.woff2
+/ipad-reader/Resources/Fonts/YejianSerif-Regular.ttf

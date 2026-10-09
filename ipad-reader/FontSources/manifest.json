@@ -1,0 +1,32 @@
+[
+  {
+    "target": "ipad-reader/Preview/assets/YejianSerif-Regular.woff2",
+    "parts": [
+      "font-00-00.gzpart",
+      "font-00-01.gzpart",
+      "font-00-02.gzpart",
+      "font-00-03.gzpart",
+      "font-00-04.gzpart",
+      "font-00-05.gzpart",
+      "font-00-06.gzpart",
+      "font-00-07.gzpart"
+    ]
+  },
+  {
+    "target": "ipad-reader/Resources/Fonts/YejianSerif-Regular.ttf",
+    "parts": [
+      "font-01-00.gzpart",
+      "font-01-01.gzpart",
+      "font-01-02.gzpart",
+      "font-01-03.gzpart",
+      "font-01-04.gzpart",
+      "font-01-05.gzpart",
+      "font-01-06.gzpart",
+      "font-01-07.gzpart",
+      "font-01-08.gzpart",
+      "font-01-09.gzpart",
+      "font-01-10.gzpart",
+      "font-01-11.gzpart"
+    ]
+  }
+]

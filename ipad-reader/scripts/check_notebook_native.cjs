@@ -1,0 +1,13 @@
+/* Import an SVG exported by the native test attachment into a fresh browser. */
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+(async()=>{
+ const nativeFile=path.resolve(process.argv[2]),xml=fs.readFileSync(nativeFile,'utf8'),original=JSON.parse(Buffer.from(xml.match(/<metadata id="yejian-notebook">([^<]+)<\/metadata>/)[1],'base64')).page;
+ const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{})}),page=await browser.newPage({viewport:{width:1180,height:820}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(process.argv[3]||'http://127.0.0.1:8877/');await page.locator('#paper-content p').first().waitFor();await page.getByRole('button',{name:'更多',exact:true}).click();await page.getByRole('button',{name:'笔记本模式',exact:true}).click();await page.locator('#nb-sheet').waitFor();
+ await page.locator('#nb-file').setInputFiles(nativeFile);await page.waitForFunction(()=>document.querySelector('#nb-sheet text')?.textContent.includes('草图'));
+ const read=()=>page.evaluate(()=>new Promise(resolve=>{const r=indexedDB.open('yejian-notebooks',1);r.onsuccess=()=>{const db=r.result,g=db.transaction('state').objectStore('state').get('library');g.onsuccess=()=>{const d=g.result;resolve(d.notebooks.find(b=>b.id===d.notebookID).sections.find(s=>s.id===d.sectionID).pages.find(p=>p.id===d.pageID));db.close();};};}));
+ await page.waitForFunction(()=>document.getElementById('nb-saved').textContent==='已保存在本机');let restored=await read();assert.deepEqual(restored.strokes,original.strokes);assert.equal(restored.inkData,original.inkData);assert.ok(restored.inkData);assert.equal(restored.title,original.title);
+ await page.getByRole('button',{name:'收起笔记导航',exact:true}).click();await page.getByRole('button',{name:'收起笔记导航',exact:true}).click();const r=await page.locator('#nb-scroll').boundingBox();await page.mouse.move(r.x+100,r.y+240);await page.mouse.down();await page.mouse.move(r.x+300,r.y+260,{steps:12});await page.mouse.up();await page.waitForFunction(()=>document.getElementById('nb-saved').textContent==='已保存在本机');restored=await read();assert.equal(restored.strokes.length,original.strokes.length+1);assert.deepEqual(restored.strokes[0],original.strokes[0]);assert.equal(restored.inkData,null);
+ assert.deepEqual(errors,[]);await browser.close();console.log('PASS: native SVG imports into browser with exact pressure, transform and PKDrawing; browser editing clears obsolete native cache while preserving original vector points.');
+})().catch(e=>{console.error(e);process.exit(1);});

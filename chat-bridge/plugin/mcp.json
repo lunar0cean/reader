@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "yejian-reader": {
+      "type": "streamable-http",
+      "url": "https://yejian-chat-bridge.hilariobrehmer242.workers.dev/mcp"
+    }
+  }
+}

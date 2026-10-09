@@ -1,0 +1,33 @@
+{
+  "name": "yejian-chat-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "configure": "node scripts/configure.mjs",
+    "deploy:check": "node scripts/predeploy.mjs",
+    "deploy": "npm run deploy:check && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:remote": "wrangler d1 migrations apply DB --remote"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.1",
+    "standardwebhooks": "1.1.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20261005.1",
+    "@types/node": "26.6.4",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.147.0"
+  },
+  "overrides": {
+    "undici": "7.29.1",
+    "sharp": "0.35.4"
+  }
+}

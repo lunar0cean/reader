@@ -1,0 +1,47 @@
+/* Format integration, isolated from the user's reading library. */
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+(async()=>{
+ const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{})}),context=await browser.newContext({viewport:{width:1180,height:820}}),page=await context.newPage(),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ const root=path.resolve(__dirname,'..'),fixtures=path.join(root,'Resources/Fixtures'),out=path.join(root,'Preview/test-results');fs.mkdirSync(out,{recursive:true});
+ const button=name=>page.getByRole('button',{name,exact:true}),menu=async name=>{await button('更多').click();await button(name).click();};
+ const read=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('yejian.reader.preview.v1')));
+ await page.goto(process.argv[2]||'http://127.0.0.1:8877/');await page.locator('#paper-content p').first().waitFor();
+ await page.locator('#file-input').setInputFiles(path.join(fixtures,'sample-illustrated.epub'));
+ await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='有插图的 EPUB');
+ assert.equal(await page.locator('.reader-image img').count(),1);assert.equal(await page.locator('.reader-image img').evaluate(e=>e.naturalWidth),480);
+ let state=await read(),book=state.books.find(b=>b.id===state.currentBook);
+ assert.deepEqual(book.chapters.map(c=>c.href),['OPS/text/one.xhtml','OPS/text/two.xhtml']);assert.equal(Buffer.from(book.original,'base64').compare(fs.readFileSync(path.join(fixtures,'sample-illustrated.epub'))),0);
+ await page.screenshot({path:path.join(out,'reader-format-epub.png')});
+ await button('阅读助手').click();await button('保存为笔记').click();await page.locator('.citation').click();assert.equal((await read()).notes.at(-1).anchor.href,'OPS/text/one.xhtml');
+ await button('搜索原文').click();await page.getByLabel('搜索当前书籍',{exact:true}).fill('引用跳转');await page.locator('#search-results button').click();
+ assert.ok((await page.locator('#paper-content-right').textContent()).includes('引用跳转')||(await page.locator('#paper-content').textContent()).includes('引用跳转'));
+ await page.locator('#file-input').setInputFiles(path.join(fixtures,'sample-epub2.epub'));await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='有插图的 EPUB'&&document.getElementById('toc').textContent.includes('NCX 第一章'));assert.equal((await read()).books.at(-1).chapters[1].title,'NCX 第二章');
+ await page.locator('#file-input').setInputFiles(path.join(fixtures,'sample-fixed.pdf'));await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='PDF page verification');
+ await page.locator('#paper canvas[data-rendered=true]').waitFor();await page.locator('#paper-right canvas[data-rendered=true]').waitFor();
+ assert.equal(await page.locator('#progress').getAttribute('max'),'2');state=await read();book=state.books.find(b=>b.id===state.currentBook);assert.equal(book.chapters[1].paragraphs[0],'');assert.ok(book.importWarnings.length);
+ await page.screenshot({path:path.join(out,'reader-format-pdf.png')});
+ await button('阅读助手').click();await button('保存为笔记').click();await page.locator('.citation').click();assert.equal((await read()).notes.at(-1).anchor.pdfPage,0);
+ await page.getByLabel('开始或收起批注',{exact:true}).click();const box=await page.locator('#paper').boundingBox(),seam=box.x+box.width,y=box.y+box.height*.5;
+ await page.mouse.move(seam-100,y);await page.mouse.down();for(let x=seam-100;x<=seam+100;x+=10)await page.mouse.move(x,y);await page.mouse.up();
+ assert.equal(await page.locator('#ink-layer path').count(),1);const ink=await page.locator('#ink-layer path').getAttribute('d');await page.screenshot({path:path.join(out,'reader-format-pdf-cross-page.png')});
+ await page.getByLabel('开始或收起批注',{exact:true}).click();await page.setViewportSize({width:820,height:1180});await page.waitForFunction(()=>document.getElementById('page-wrap').getBoundingClientRect().width<=820);assert.equal(await page.locator('#ink-layer path').getAttribute('d'),ink);
+ await button('下一页').click();assert.equal(await page.locator('#ink-layer path').getAttribute('d'),ink);await button('下一页').click();await page.locator('#paper canvas[data-rendered=true]').waitFor();await page.screenshot({path:path.join(out,'reader-format-pdf-rotated-crop.png')});
+ await menu('导出与备份');let wait=page.waitForEvent('download');await page.locator('[data-export=backup]').click();const backupPath=path.join(out,'format-backup.json');await(await wait).saveAs(backupPath);
+ const backup=JSON.parse(fs.readFileSync(backupPath)),pdf=backup.books.find(b=>b.format==='PDF');assert.equal(backup.schema,3);assert.equal(Buffer.from(pdf.original,'base64').compare(fs.readFileSync(path.join(fixtures,'sample-fixed.pdf'))),0);
+ await page.locator('#file-input').setInputFiles(path.join(fixtures,'sample-article.html'));await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='一篇离线文章');state=await read();book=state.books.find(b=>b.id===state.currentBook);
+ assert.ok(book.chapters[0].paragraphs.join('').includes('重要文字 与 & 实体'));for(const t of ['首页广告','window.injected','推荐广告'])assert.ok(!book.chapters[0].paragraphs.join('').includes(t));assert.equal(await page.evaluate(()=>window.injected),undefined);
+ await page.screenshot({path:path.join(out,'reader-format-article.png')});
+ const articleImage=Object.values(backup.books.find(b=>b.format==='EPUB').assets)[0];await page.route('https://example.test/picture.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from(articleImage.split(',')[1],'base64')}));await page.route('https://example.test/article',route=>route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(fixtures,'sample-article.html'),'utf8').replace('</article>',"<img src='/picture.png' alt='网页插图'></article>")}));
+ await menu('添加网页文章');await page.getByLabel('文章网址',{exact:true}).fill('https://example.test/article');await button('保存到书库').click();await page.waitForFunction(()=>!document.getElementById('web-import-dialog').open);
+ state=await read();book=state.books.find(b=>b.id===state.currentBook);assert.equal(book.source,'https://example.test/article');assert.equal(book.chapters[0].href,book.source);assert.equal(Object.keys(book.assets).length,1);assert.equal(await page.locator('.reader-image img').evaluate(e=>e.naturalWidth),480);
+ await page.locator('#file-input').setInputFiles(backupPath);await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='PDF page verification');
+ await button('上一页').click();assert.equal(await page.locator('#ink-layer path').getAttribute('d'),ink);await page.reload();await page.locator('#paper canvas[data-rendered=true]').waitFor();assert.equal(await page.locator('#ink-layer path').getAttribute('d'),ink);
+ // Large raw HTML is small after extraction but exceeds localStorage once its original is retained.
+ const largeHTML='<title>大文件离线保存</title><article><p>正文可离线恢复。</p></article><!--'+'a'.repeat(4*1024*1024)+'-->';
+ await page.locator('#file-input').setInputFiles({name:'large.html',mimeType:'text/html',buffer:Buffer.from(largeHTML)});await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='大文件离线保存');
+ await page.waitForFunction(()=>new Promise(resolve=>{const r=indexedDB.open('yejian-reader',1);r.onsuccess=()=>{const get=r.result.transaction('state').objectStore('state').get('library');get.onsuccess=()=>{const s=get.result;resolve(s?.books.some(b=>b.title==='大文件离线保存'));r.result.close();};};}));
+ await page.reload();await page.waitForFunction(()=>document.getElementById('breadcrumb').textContent==='大文件离线保存');assert.ok((await page.locator('#paper-content').textContent()).includes('离线恢复'));
+ assert.deepEqual(errors,[]);await browser.close();console.log('PASS: EPUB spine/images/source bytes; PDF original/scanned/rotated crop pages, continuous cross-page ink, citation page numbers, restore/reload; HTML/URL article extraction; large-file IndexedDB persistence.');
+})().catch(e=>{console.error(e);process.exit(1);});

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>页间 · 让想法留在书页里</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="notebook.css">
+  <script src="library.js" defer></script>
+  <script src="app.js" defer></script>
+  <script src="notebook-data.js" defer></script>
+  <script src="notebook.js" defer></script>
+</head>
+<body>
+<svg class="icon-defs" aria-hidden="true"><defs>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5c-3-2-6-2-10-1v15c4-1 7-1 10 1 3-2 6-2 10-1V4c-4-1-7-1-10 1Zm0 0v15"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M13 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8M12 12l8-8 2 2-8 8-4 1 2-3Z"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 16V3m-4 4 4-4 4 4M4 15v5h16v-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6L16 3Zm-10 11 5 5M14 5l5 5"/></symbol>
+  <symbol id="i-marker" viewBox="0 0 24 24"><path d="m14 3 7 7-8 8-7-7 8-8Zm-8 8-3 5 5 5 5-3M2 22h12"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m14 3 8 8-10 10H7l-5-5L14 3ZM7 11l8 8M12 21h10"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M8 4 3 9l5 5M3 9h11a7 7 0 0 1 0 14"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="m16 4 5 5-5 5M21 9H10a7 7 0 0 0 0 14"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="m9 15 6-6M8 12l-3 3a4 4 0 0 0 6 6l4-4M16 12l3-3a4 4 0 0 0-6-6l-4 4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-room" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v11H3V10Zm5 11v-8h8v8"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 2-1 3 2 3-1 1-3 3-2-1-3 2-2-2-3-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 5h13M4 12h13M4 19h13"/><path d="M21 5h.1M21 12h.1M21 19h.1"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></symbol>
+</defs></svg>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar" aria-label="目录、书签与引文">
+    <div class="contents-header"><button class="icon-btn previous" data-action="sidebar" aria-label="关闭目录"><svg><use href="#i-chevron"/></svg></button><span id="contents-title"></span></div>
+    <div class="sidebar-tabs"><button class="active" data-side="toc">目录</button><button data-side="marks">书签</button><button data-side="quotes">引文</button></div>
+    <div class="toc" id="toc"></div>
+  </aside>
+  <main class="workspace" id="workspace">
+    <header class="topbar">
+      <div class="toolbar-row"><button class="icon-btn previous" data-action="library" aria-label="返回书库"><svg><use href="#i-chevron"/></svg></button>
+      <div class="top-actions">
+        <button class="icon-btn" id="annotation-toggle" data-action="annotate" aria-label="开始或收起批注" aria-pressed="false"><svg><use href="#i-pen"/></svg></button>
+        <button class="icon-btn" data-action="inspector" aria-label="阅读助手"><svg><use href="#i-spark"/></svg></button>
+        <button class="icon-btn" data-action="search" aria-label="搜索原文"><svg><use href="#i-search"/></svg></button>
+        <button class="icon-btn" data-action="sidebar" aria-label="目录"><svg><use href="#i-list"/></svg></button>
+        <button class="icon-btn" data-action="appearance" aria-label="阅读设置"><svg><use href="#i-settings"/></svg></button>
+        <button class="icon-btn" data-action="more" aria-label="更多"><svg><use href="#i-more"/></svg></button>
+      </div></div>
+      <strong id="breadcrumb"></strong><span id="book-author"></span>
+    </header>
+    <div id="reader-view" class="reader-view">
+      <div class="reader-scroll" id="reader-scroll">
+        <div class="page-wrap" id="page-wrap"><div class="book-object" id="book-object">
+          <article class="paper" id="paper" aria-label="左侧书页"><div class="paper-content" id="paper-content"></div><div class="text-layer" id="text-layer"></div></article>
+          <article class="paper" id="paper-right" aria-label="右侧书页"><div class="paper-content" id="paper-content-right"></div><div class="text-layer" id="text-layer-right"></div></article>
+          <svg class="ink-layer" id="ink-layer" aria-label="连续跨页批注画布"></svg>
+        </div></div>
+      </div>
+      <div class="pen-tray" id="pen-tray" hidden aria-label="批注工具">
+        <div class="tool-group"><button class="tool active" data-tool="pen" aria-label="钢笔" aria-pressed="true"><svg><use href="#i-pen"/></svg></button><button class="tool" data-tool="marker" aria-label="荧光笔" aria-pressed="false"><svg><use href="#i-marker"/></svg></button><button class="tool" data-tool="eraser" aria-label="橡皮" aria-pressed="false"><svg><use href="#i-eraser"/></svg></button><button class="tool text-tool" data-tool="text" aria-label="文字笔记" aria-pressed="false">T</button></div>
+        <span class="separator"></span><div class="ink-colors"><button class="color-dot selected" data-color="#445d7b" style="--swatch:#445d7b" aria-label="蓝色笔迹" aria-pressed="true"></button><button class="color-dot" data-color="#b27562" style="--swatch:#b27562" aria-label="赭色笔迹" aria-pressed="false"></button><button class="color-dot" data-color="#527568" style="--swatch:#527568" aria-label="绿色笔迹" aria-pressed="false"></button></div>
+        <span class="separator"></span><button class="tool" data-action="undo" aria-label="撤销"><svg><use href="#i-undo"/></svg></button><button class="tool" data-action="redo" aria-label="重做"><svg><use href="#i-redo"/></svg></button><button class="tool" data-action="hide-ink" aria-label="显示或隐藏笔记层" aria-pressed="true"><svg><use href="#i-eye"/></svg></button>
+      </div>
+      <footer class="reader-bottom"><span class="page-status" id="page-status"></span><div class="progress-row"><button class="icon-btn previous" data-action="prev" aria-label="上一页"><svg><use href="#i-chevron"/></svg></button><input type="range" id="progress" min="0" max="2" value="0" aria-label="阅读进度"><button class="icon-btn" data-action="next" aria-label="下一页"><svg><use href="#i-chevron"/></svg></button></div></footer>
+    </div>
+    <section class="library-view" id="library-view" hidden>
+      <div class="library-title"><div><p class="eyebrow">YOUR LITTLE LIBRARY</p><h1>我的书库</h1><p>每一次翻开，都是一次新的相遇。</p></div><button class="primary-btn" data-action="import"><svg><use href="#i-import"/></svg>导入书籍</button></div>
+      <label class="library-search"><svg><use href="#i-search"/></svg><input id="book-search" type="search" placeholder="寻找一本书…" aria-label="搜索书库"></label>
+      <div class="books-grid" id="books-grid"></div>
+      <div class="library-footnote">可导入 TXT、可重排 EPUB、PDF、HTML；网页文章可在「更多」添加。</div>
+    </section>
+  </main>
+
+  <aside class="inspector" id="inspector" aria-label="阅读助手与笔记">
+    <div class="inspector-tabs"><button class="active" data-panel="assistant"><svg><use href="#i-spark"/></svg>阅读助手</button><button data-panel="notes"><svg><use href="#i-note"/></svg>笔记</button><button class="icon-btn inspector-dismiss" data-action="inspector" aria-label="关闭阅读助手"><svg><use href="#i-close"/></svg></button></div>
+    <div class="assistant-panel" id="assistant-panel">
+      <div class="assistant-intro"><div class="spark-badge"><svg><use href="#i-spark"/></svg></div><h2>陪你读懂这一页</h2><p>让问题有回应，让回答有出处。</p></div>
+      <div class="scope"><svg><use href="#i-book"/></svg><span>当前书籍与笔记</span><span class="scope-indicator"></span></div>
+      <div class="demo-label">交互示例 · 尚未连接 AI 模型</div>
+      <div class="conversation" id="conversation" aria-live="polite"></div>
+      <div class="suggestions" id="suggestions"><span>从一个小问题开始</span><button data-question="这一页讲了什么？">这一页讲了什么？<span>↗</span></button><button data-question="摘出与笔记有关的原文">摘出与笔记有关的原文<span>↗</span></button></div>
+      <form class="ask-form" id="ask-form"><label class="sr-only" for="question">向阅读助手提问</label><textarea id="question" rows="2" placeholder="关于这本书，你想问什么？"></textarea><div class="composer-bottom"><span><svg><use href="#i-link"/></svg>回答附原文定位</span><button type="submit" aria-label="发送问题">↑</button></div></form>
+      <p class="assistant-footnote">示例只提取本地原文，未发送任何内容。</p>
+    </div>
+    <div class="notes-panel" id="notes-panel" hidden><div class="notes-heading"><h2>留在书页里的想法</h2><button class="text-btn" data-action="add-note">＋ 新笔记</button></div><div id="notes-list"></div></div>
+    <div class="inspector-bottom"><span class="local-dot"></span>原文与想法，都有来处。</div>
+  </aside>
+</div>
+<div class="more-menu" id="more-menu" hidden>
+<button id="open-notebooks">笔记本模式</button>
+<button data-action="notes">我的笔记</button><button data-action="bookmark">添加书签</button><button data-action="export">导出与备份</button><button data-action="import">导入书籍</button><button data-action="web-import">添加网页文章</button><button data-action="focus">隐藏工具栏</button>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="file-input" accept=".txt,.json,.epub,.pdf,.html,.htm" multiple hidden>
+<dialog id="web-import-dialog"><form id="web-import-form"><div class="dialog-header"><h2>添加网页文章</h2><button type="button" class="icon-btn" data-action="close-web-import" aria-label="关闭网页导入">×</button></div><p class="dialog-subtitle">保存公开静态文章，离线也能阅读和批注。预览可能受跨域限制，也可导入 HTML 文件。</p><input id="article-url" type="url" placeholder="https:// 文章网址" aria-label="文章网址" required><button class="primary-btn" type="submit">保存到书库</button></form></dialog>
+<dialog id="settings-dialog" class="settings-popover"><form method="dialog" class="dialog-header"><h2>阅读设置</h2><button class="icon-btn" aria-label="关闭阅读设置"><svg><use href="#i-close"/></svg></button></form>
+<div class="setting-row"><label>颜色模式</label><div class="theme-options"><button data-theme="paper" aria-label="暖纸背景" class="theme-swatch selected">暖纸</button><button data-theme="sepia" aria-label="棕褐背景" class="theme-swatch sepia">棕褐</button><button data-theme="night" aria-label="夜读背景" class="theme-swatch night">夜读</button></div></div>
+<label class="setting-row">字体<select id="font-family"><option value="sans">黑体</option><option value="serif">宋体</option></select></label>
+<div class="setting-row"><label for="font-size">字体大小</label><div class="stepper"><button data-adjust="size" data-delta="-1" aria-label="减小字号">⊖</button><output id="font-output">22</output><button data-adjust="size" data-delta="1" aria-label="增大字号">⊕</button></div><input id="font-size" type="range" min="17" max="36" value="22" aria-label="字号"></div>
+<label class="setting-row">字体粗细<input id="font-weight" type="range" min="400" max="700" step="100" value="400"></label>
+<div class="setting-row"><label for="line-height">行距</label><div class="stepper"><button data-adjust="leading" data-delta="-0.05" aria-label="减小行距">⊖</button><output id="line-output">145%</output><button data-adjust="leading" data-delta="0.05" aria-label="增大行距">⊕</button></div><input id="line-height" type="range" min="1.15" max="2.2" step="0.05" value="1.45" aria-label="行距"></div>
+<label class="setting-row">文本对齐<select id="text-align"><option value="justify">两端对齐</option><option value="left">左对齐</option></select></label>
+<label class="setting-row">页边距 <output id="margin-output">44</output><input id="page-margin" type="range" min="16" max="90" value="44"></label>
+<p class="layout-notice" id="layout-notice">有笔迹时保留版式，避免圈画错位。旋转屏幕时笔迹随书页一起缩放。</p></dialog>
+<dialog id="search-dialog" class="search-popover"><form method="dialog" class="dialog-header"><h2>搜索原文</h2><button class="icon-btn" aria-label="关闭原文搜索"><svg><use href="#i-close"/></svg></button></form><input id="text-search" type="search" placeholder="搜索当前书籍" aria-label="搜索当前书籍"><div id="search-results"></div></dialog>
+<dialog id="export-dialog"><form method="dialog" class="dialog-header"><h2>把阅读带走</h2><button class="icon-btn" aria-label="关闭导出"><svg><use href="#i-close"/></svg></button></form><p class="dialog-subtitle">导出当前书籍；完整备份包含整个书库。</p><div class="export-options"><button data-export="markdown"><svg><use href="#i-note"/></svg><div><strong>文字笔记 · Markdown</strong><span>笔记、摘录与原文位置</span></div><span>↗</span></button><button data-export="svg"><svg><use href="#i-pen"/></svg><div><strong>当前页笔记层 · SVG</strong><span>透明背景，保留笔迹与文字</span></div><span>↗</span></button><button data-export="print"><svg><use href="#i-book"/></svg><div><strong>当前展开页原文＋笔迹</strong><span>使用浏览器打印，选择保存为 PDF</span></div><span>↗</span></button><button data-export="original"><svg><use href="#i-book"/></svg><div><strong>导入原文件</strong><span>保留 EPUB、PDF 或网页 HTML 原件</span></div><span>↗</span></button><button data-export="backup"><svg><use href="#i-export"/></svg><div><strong>完整可编辑备份 · JSON</strong><span>书库、笔迹、定位、笔记与版式</span></div><span>↗</span></button></div><button class="restore-btn" data-action="import">导入 TXT 或恢复 JSON 备份</button></dialog>
+<dialog id="note-dialog"><form id="note-form"><div class="dialog-header"><h2>写在这一页</h2><button type="button" class="icon-btn" data-action="close-note" aria-label="关闭文字笔记"><svg><use href="#i-close"/></svg></button></div><label class="sr-only" for="note-text">笔记内容</label><textarea id="note-text" placeholder="此刻的想法…" rows="5" required maxlength="5000"></textarea><button type="submit" class="primary-btn">保存笔记</button></form></dialog>
+</body>
+</html>

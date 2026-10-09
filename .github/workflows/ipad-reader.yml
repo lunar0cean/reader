@@ -1,0 +1,140 @@
+name: iPad 阅读器 · 构建
+
+on:
+  workflow_dispatch:
+    inputs:
+      validate:
+        description: '额外运行模拟器和完整回归'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "ipad-reader/Native/**"
+      - "ipad-reader/Voice/**"
+      - "ipad-reader/Tests/**"
+      - "ipad-reader/UITests/**"
+      - "ipad-reader/Resources/**"
+      - "ipad-reader/project.yml"
+      - ".github/workflows/ipad-reader.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipad-reader-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: 恢复完整阅读字体
+        run: python3 ipad-reader/tools/restore_font_resources.py
+      - name: 查看 Xcode 环境
+        run: xcodebuild -version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ipad-reader/Voice/Japanese
+          cache-on-failure: true
+      - name: 编译离线日文文本处理库
+        run: |
+          set -o pipefail
+          rustup target add aarch64-apple-ios
+          cd ipad-reader/Voice/Japanese
+          IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo build --release --lib --target aarch64-apple-ios
+      - name: 编译模拟器日文文本处理库
+        if: github.event_name == 'workflow_dispatch' && inputs.validate
+        run: |
+          set -o pipefail
+          rustup target add aarch64-apple-ios-sim x86_64-apple-ios
+          cd ipad-reader/Voice/Japanese
+          IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo build --release --lib --target aarch64-apple-ios-sim
+          IPHONEOS_DEPLOYMENT_TARGET=17.0 cargo build --release --lib --target x86_64-apple-ios
+          mkdir -p target/ios-simulator
+          xcrun lipo -create target/aarch64-apple-ios-sim/release/libgsv_native.a target/x86_64-apple-ios/release/libgsv_native.a -output target/ios-simulator/libgsv_native.a
+      - name: 生成 Xcode 工程
+        run: |
+          brew install xcodegen
+          cd ipad-reader
+          xcodegen generate
+      - name: 编译 iPad 模拟器版本
+        if: github.event_name == 'workflow_dispatch' && inputs.validate
+        run: |
+          set -o pipefail
+          xcodebuild -project ipad-reader/YeJian.xcodeproj -scheme YeJian \
+            -configuration Debug -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ipad-reader/build-simulator \
+            CODE_SIGNING_ALLOWED=NO build > simulator-build.log 2>&1 || { tail -n 100 simulator-build.log; exit 1; }
+          tail -n 20 simulator-build.log
+      - name: 编译未签名设备版本
+        run: |
+          set -o pipefail
+          xcodebuild -project ipad-reader/YeJian.xcodeproj -scheme YeJian \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath ipad-reader/build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build > device-build.log 2>&1 || { tail -n 100 device-build.log; exit 1; }
+          tail -n 20 device-build.log
+          mkdir -p ipad-reader/build/ipa/Payload
+          cp -R ipad-reader/build/Build/Products/Release-iphoneos/YeJian.app ipad-reader/build/ipa/Payload/
+          cd ipad-reader/build/ipa
+          zip -qr YeJian-unsigned.ipa Payload
+      - name: 验证原生字体、分页及横竖屏书页
+        if: github.event_name == 'workflow_dispatch' && inputs.validate
+        run: |
+          set -o pipefail
+          reader_simulator_id=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=[d for group in json.load(sys.stdin)["devices"].values() for d in group if "iPad" in d["name"]]; print(next((d["udid"] for d in devices if "A16" in d["name"]), devices[0]["udid"]))')
+          xcrun simctl boot "$reader_simulator_id"
+          xcrun simctl bootstatus "$reader_simulator_id" -b
+          xcrun simctl install "$reader_simulator_id" ipad-reader/build-simulator/Build/Products/Debug-iphonesimulator/YeJian.app
+          xcrun simctl launch "$reader_simulator_id" com.lunar0cean.yejian
+          sleep 3
+          xcrun simctl io "$reader_simulator_id" screenshot ipad-reader/build/native-ipad.png
+          xcodebuild -project ipad-reader/YeJian.xcodeproj -scheme YeJian \
+            -configuration Debug -destination "platform=iOS Simulator,id=$reader_simulator_id" \
+            -derivedDataPath ipad-reader/build-simulator -parallel-testing-enabled NO \
+            -resultBundlePath ipad-reader/build/ReadingTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO test | tee native-tests.log
+      - name: 导出原生界面截图
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.validate
+        run: |
+          if [ -d ipad-reader/build/ReadingTests.xcresult ]; then
+            xcrun xcresulttool export attachments --path ipad-reader/build/ReadingTests.xcresult --output-path ipad-reader/build/screenshots
+          fi
+      - name: 保留原生界面检查截图
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.validate
+        uses: actions/upload-artifact@v4
+        with:
+          name: YeJian-native-screenshots
+          path: ipad-reader/build/screenshots
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: 保留未签名 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: YeJian-unsigned-build
+          path: ipad-reader/build/ipa/YeJian-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 3
+      - name: 保留模拟器 App
+        if: github.event_name == 'workflow_dispatch' && inputs.validate
+        uses: actions/upload-artifact@v4
+        with:
+          name: YeJian-simulator-app
+          path: |
+            ipad-reader/build-simulator/Build/Products/Debug-iphonesimulator/YeJian.app
+            ipad-reader/build/native-ipad.png
+          retention-days: 3
+      - name: 保留编译日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: YeJian-build-logs
+          path: |
+            *-build.log
+            native-tests.log
+          if-no-files-found: ignore
+          retention-days: 3
