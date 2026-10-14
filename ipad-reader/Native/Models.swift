@@ -131,6 +131,35 @@ struct NativeBackup: Codable {
     var bookmarks: [SourceAnchor]
     var currentBookID: String
     var theme = "paper"
+    var shelves: ReaderShelves? = nil
+}
+
+struct ReaderShelf: Codable, Identifiable, Equatable {
+    var id = UUID().uuidString
+    var title: String
+}
+
+/// Both ordinary books and independent notebooks belong to the same shelf.
+/// Optional in old backups; deleting a category only removes its assignments.
+struct ReaderShelves: Codable, Equatable {
+    var categories: [ReaderShelf] = []
+    var assignments: [String: String] = [:]
+    static func key(_ id: String, notebook: Bool) -> String { (notebook ? "notebook:" : "book:") + id }
+    mutating func removeCategory(_ id: String) {
+        categories.removeAll { $0.id == id }
+        assignments = assignments.filter { $0.value != id }
+    }
+}
+
+extension NativeBackup {
+    mutating func removeBook(_ id: String) {
+        books.removeAll { $0.id == id }
+        readingState.removeValue(forKey: id)
+        notes.removeAll { $0.anchor.bookID == id }
+        bookmarks.removeAll { $0.bookID == id }
+        shelves?.assignments.removeValue(forKey: ReaderShelves.key(id, notebook: false))
+        if currentBookID == id { currentBookID = books.first?.id ?? "" }
+    }
 }
 
 struct ReadingPage: Identifiable {
@@ -180,11 +209,13 @@ enum ReaderPagination {
         if book.isFixedLayout { return ReaderPDF.pages(book: book) }
         var result: [ReadingPage] = []
         for (chapterIndex, chapter) in book.chapters.enumerated() {
+            if Task.isCancelled { return [] }
             let text = ReaderImages.attributed(chapter: chapter, book: book, layout: layout)
             let paragraphRanges = chapter.paragraphRanges
             let framesetter = CTFramesetterCreateWithAttributedString(text as CFAttributedString)
             var offset = 0
             while offset < text.length {
+                if Task.isCancelled { return [] }
                 let path = CGPath(rect: CGRect(origin: .zero, size: bodyRect(layout, opening: book.format != "MD" && offset == 0).size), transform: nil)
                 let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: offset, length: 0), path, nil)
                 let visible = CTFrameGetVisibleStringRange(frame)

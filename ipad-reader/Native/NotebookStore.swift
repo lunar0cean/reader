@@ -104,6 +104,22 @@ final class NotebookStore: ObservableObject {
         guard let index = document.notebooks.firstIndex(where: { $0.id == bookID }) else { return }
         document.notebooks[index].customCover = data; scheduleSave()
     }
+    func deleteBook(_ id: String) { document.removeBook(id); scheduleSave() }
+    func deleteSection(_ id: String) {
+        guard let b = document.notebooks.firstIndex(where: { $0.id == document.notebookID }) else { return }
+        document.notebooks[b].sections.removeAll { $0.id == id }
+        if document.notebooks[b].sections.isEmpty { document.notebooks[b].sections = [NotebookSection()] }
+        document.notebooks[b].lastSectionID = nil; document.notebooks[b].lastPageID = nil
+        document.normalizeSelection(); scheduleSave()
+    }
+    func deletePage(_ id: String) {
+        guard let b = document.notebooks.firstIndex(where: { $0.id == document.notebookID }),
+              let s = document.notebooks[b].sections.firstIndex(where: { $0.id == document.sectionID }) else { return }
+        document.notebooks[b].sections[s].pages.removeAll { $0.id == id }
+        if document.notebooks[b].sections[s].pages.isEmpty { document.notebooks[b].sections[s].pages = [NotebookPage()] }
+        document.notebooks[b].lastPageID = nil
+        document.normalizeSelection(); scheduleSave()
+    }
     func addSection(_ title: String) {
         guard let b = document.notebooks.firstIndex(where: { $0.id == document.notebookID }) else { return }
         var section = NotebookSection(); section.title = title

@@ -20,9 +20,15 @@ final class ReaderStore: ObservableObject {
     private let persistence = ReaderLibraryPersistence()
     private lazy var progressWriter = ReaderProgressWriter(url: Self.storageURL, write: { [persistence] in try persistence.write($0, legacy: $1) })
     @Published var importStatus = ""
+    @Published var isPaginating = false
     private var paginationTask: Task<Void, Never>?
     private var recoveryBlocked = false
     private var inkCache: (String, [String: Data], [String: Data], Bool)?
+    private var layoutAnchor: SourceAnchor?
+    private var layoutTask: Task<[ReadingPage], Never>?
+    private var paginationRevision = 0
+    private var importControl: ReaderImportControl?
+    private var importID: UUID?
 
     private static var storageURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -108,10 +114,12 @@ final class ReaderStore: ObservableObject {
     func saveInBackground() { guard !recoveryBlocked else { return }; progressWriter.saveInBackground(backup) { [weak self] in self?.errorMessage = "保存失败：\($0)" } }
     func openBook(_ id: String) {
         guard let selected = backup.books.first(where: { $0.id == id }) else { return }
-        paginationTask?.cancel(); pages = []; referenceAnchor = nil; isAnnotating = false
+        paginationTask?.cancel(); layoutTask?.cancel(); layoutAnchor = nil; pages = []; referenceAnchor = nil; isAnnotating = false; isPaginating = true
+        paginationRevision += 1; let revision = paginationRevision
         backup.currentBookID = id
         let layout = self.layout, target = readingState.pageIndex
         paginationTask = Task {
+            defer { if paginationRevision == revision { isPaginating = false } }
             var current = selected
             if selected.format == "PPTX", selected.slideRendererVersion != ReaderSlides.version, let original = selected.original {
                 notice = "正在更新幻灯片显示…"
@@ -153,6 +161,33 @@ final class ReaderStore: ObservableObject {
         backup.books[index].customCover = data
         scheduleSave()
     }
+    func deleteBook(_ id: String) {
+        let selected = backup.currentBookID == id
+        if selected { paginationTask?.cancel(); layoutTask?.cancel(); paginationRevision += 1; pages = []; pageIndex = 0; isPaginating = false; isAnnotating = false; referenceAnchor = nil; speechHighlight = nil }
+        backup.removeBook(id); inkCache = nil
+        ReaderPDF.releaseCache(); ReaderPDFImages.releaseCache()
+        if selected, !backup.currentBookID.isEmpty { openBook(backup.currentBookID) }
+        scheduleSave()
+    }
+    func addShelf(_ title: String) {
+        let name = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !name.isEmpty else { return }
+        var shelves = backup.shelves ?? ReaderShelves()
+        guard !shelves.categories.contains(where: { $0.title == name }) else { return }
+        shelves.categories.append(ReaderShelf(title: name)); backup.shelves = shelves; scheduleSave()
+    }
+    func renameShelf(_ id: String, title: String) {
+        let name = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !name.isEmpty, let i = backup.shelves?.categories.firstIndex(where: { $0.id == id }) else { return }
+        backup.shelves?.categories[i].title = name; scheduleSave()
+    }
+    func deleteShelf(_ id: String) { backup.shelves?.removeCategory(id); scheduleSave() }
+    func assignShelf(_ shelf: String?, id: String, notebook: Bool) {
+        var shelves = backup.shelves ?? ReaderShelves(), key = ReaderShelves.key(id, notebook: notebook)
+        if let shelf, shelves.categories.contains(where: { $0.id == shelf }) { shelves.assignments[key] = shelf }
+        else { shelves.assignments.removeValue(forKey: key) }
+        backup.shelves = shelves; scheduleSave()
+    }
 
     func repaginate() {
         guard let book else { pages = []; pageIndex = 0; return }
@@ -174,13 +209,26 @@ final class ReaderStore: ObservableObject {
             notice = "这本书已有手写批注，暂时保留原版式。背景和整页缩放仍可调整。"
             return
         }
-        let anchor = currentPage?.anchor
+        if layoutAnchor == nil { layoutAnchor = currentPage?.anchor }
+        paginationTask?.cancel(); layoutTask?.cancel()
+        paginationRevision += 1
         var state = readingState
         state.layout = next
         backup.readingState[backup.currentBookID] = state
-        repaginate()
-        restorePosition(anchor)
-        scheduleSave()
+        guard let source = book else { return }
+        let id = source.id
+        isPaginating = true
+        paginationTask = Task {
+            do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+            guard !Task.isCancelled else { return }
+            let worker = Task.detached(priority: .userInitiated) { ReaderPagination.pages(book: source, layout: next) }
+            layoutTask = worker
+            let result = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
+            guard !Task.isCancelled, backup.currentBookID == id, layout == next else { return }
+            pages = result; pageIndex = min(pageIndex, max(0, result.count - 1))
+            restorePosition(layoutAnchor); layoutAnchor = nil; isPaginating = false; layoutTask = nil
+            scheduleSave()
+        }
     }
 
     func configureViewport(_ size: CGSize, spread: Bool) {
@@ -213,6 +261,7 @@ final class ReaderStore: ObservableObject {
         }
     }
     func saveSpreadDrawing(_ drawing: PKDrawing, pageID: String, bookID: String) {
+        guard backup.books.contains(where: { $0.id == bookID }), !isPaginating || bookID != backup.currentBookID else { return }
         var state = backup.readingState[bookID] ?? BookReadingState()
         // Retain even an empty canonical drawing, so erasing a migrated legacy
         // stroke cannot make the old per-page drawing reappear.
@@ -223,6 +272,7 @@ final class ReaderStore: ObservableObject {
     }
 
     func saveDrawing(_ drawing: PKDrawing, pageID: String, bookID: String) {
+        guard backup.books.contains(where: { $0.id == bookID }) else { return }
         var state = backup.readingState[bookID] ?? BookReadingState()
         if drawing.strokes.isEmpty { state.drawings.removeValue(forKey: pageID) }
         else { state.drawings[pageID] = drawing.dataRepresentation() }
@@ -306,8 +356,13 @@ final class ReaderStore: ObservableObject {
 
     func importFile(_ url: URL) {
         guard !isImporting else { return }; isImporting = true; importStatus = "正在读取文件…"
+        let job = UUID(); importID = job
+        let control = ReaderImportControl { [weak self] status in
+            Task { @MainActor in if self?.importID == job { self?.importStatus = status } }
+        }
+        importControl = control
         Task {
-            defer { isImporting = false }
+            defer { if importID == job { isImporting = false; importID = nil; importControl = nil } }
             do {
                 let data = try await Task.detached(priority: .userInitiated) {
                     let access = url.startAccessingSecurityScopedResource()
@@ -317,6 +372,7 @@ final class ReaderStore: ObservableObject {
                     guard size <= limit else { throw ReaderFileError.invalid("文件超过本版支持的大小。") }
                     return try Data(contentsOf: url, options: .mappedIfSafe)
                 }.value
+                try control.check()
                 if url.pathExtension.lowercased() == "json" {
                     importStatus = "正在恢复备份…"
                     let restored = try await Task.detached(priority: .userInitiated) { try Self.decodeBackup(data) }.value
@@ -324,12 +380,15 @@ final class ReaderStore: ObservableObject {
                     notice = "原生可编辑备份已恢复"
                 } else {
                     importStatus = "正在解析 \(url.pathExtension.uppercased())…"
-                    let imported = try await Task.detached(priority: .userInitiated) { try ReaderImport.file(data: data, name: url.lastPathComponent) }.value
+                    let imported = try await Task.detached(priority: .userInitiated) { try ReaderImport.file(data: data, name: url.lastPathComponent, control: control) }.value
+                    try control.check()
                     addImported(imported)
                 }
-            } catch { errorMessage = error.localizedDescription }
+            } catch is CancellationError { notice = "导入已取消，原文件保留。" }
+            catch { errorMessage = error.localizedDescription }
         }
     }
+    func cancelImport() { importControl?.cancel(); importStatus = "正在停止导入…" }
 
     func importArticle(_ text: String) async -> Bool {
         guard !isImporting else { return false }; isImporting = true
@@ -344,9 +403,9 @@ final class ReaderStore: ObservableObject {
 
     nonisolated static func decodeBackup(_ data: Data) throws -> NativeBackup {
         let value = try JSONDecoder().decode(NativeBackup.self, from: data)
-        guard ((1...3).contains(value.version) && value.engine == "native-pencilkit-v\(value.version)"), !value.books.isEmpty,
+        guard ((1...3).contains(value.version) && value.engine == "native-pencilkit-v\(value.version)"),
               Set(value.books.map(\.id)).count == value.books.count,
-              value.books.contains(where: { $0.id == value.currentBookID }),
+              (value.books.isEmpty ? value.currentBookID.isEmpty : value.books.contains(where: { $0.id == value.currentBookID })),
               value.books.allSatisfy({ !$0.chapters.isEmpty && $0.chapters.allSatisfy { !$0.paragraphs.isEmpty } }) else {
             throw ReaderFileError.invalid("不是有效的阅读器原生备份；浏览器预览的备份暂不能导入原生版。")
         }

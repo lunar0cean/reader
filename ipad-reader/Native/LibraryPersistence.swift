@@ -22,9 +22,10 @@ final class ReaderLibraryPersistence {
     }
     func write(_ snapshot: NativeBackup, legacy: URL) throws {
         let root = Self.folder(legacy); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        var records: [String] = [], nextCached = cached, nextFiles = files
+        var records: [String] = [], nextCached = cached, nextFiles = files, changed = false
         for book in snapshot.books {
             if cached[book.id] != book || files[book.id] == nil {
+                changed = true
                 let file = try DiskRecord.write(book, root: root)
                 nextFiles[book.id] = file; nextCached[book.id] = book
             }
@@ -32,9 +33,12 @@ final class ReaderLibraryPersistence {
         }
         var state = snapshot; state.books = []
         try DiskRecord.encoder().encode(Index(state: state, books: records)).write(to: root.appendingPathComponent("index.plist"), options: .atomic)
-        let ids = Set(snapshot.books.map(\.id))
+        let ids = Set(snapshot.books.map(\.id)); changed = changed || ids != Set(cached.keys)
         cached = nextCached.filter { ids.contains($0.key) }; files = nextFiles.filter { ids.contains($0.key) }
-        DiskRecord.collect(root: root, keeping: Set(records))
+        if changed { DiskRecord.collect(root: root, keeping: Set(records)) }
+        // A committed binary index owns all records; the former large JSON is
+        // no longer needed and must not keep deleted books on disk.
+        if FileManager.default.fileExists(atPath: legacy.path) { try? FileManager.default.removeItem(at: legacy) }
     }
 }
 
@@ -63,10 +67,11 @@ final class NotebookLibraryPersistence {
     }
     func write(_ snapshot: NotebookDocument, legacy: URL) throws {
         let root = Self.folder(legacy); try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        var document = snapshot, records: [String: String] = [:], nextCached = cached, nextFiles = files
+        var document = snapshot, records: [String: String] = [:], nextCached = cached, nextFiles = files, changed = false
         for b in snapshot.notebooks.indices { for s in snapshot.notebooks[b].sections.indices { for p in snapshot.notebooks[b].sections[s].pages.indices {
             let page = snapshot.notebooks[b].sections[s].pages[p]
             if cached[page.id] != page || files[page.id] == nil {
+                changed = true
                 let file = try DiskRecord.write(page, root: root)
                 nextFiles[page.id] = file; nextCached[page.id] = page
             }
@@ -76,8 +81,10 @@ final class NotebookLibraryPersistence {
             document.notebooks[b].sections[s].pages[p].elements = []
         } } }
         try DiskRecord.encoder().encode(Index(document: document, pages: records)).write(to: root.appendingPathComponent("index.plist"), options: .atomic)
+        changed = changed || Set(records.keys) != Set(cached.keys)
         cached = nextCached.filter { records[$0.key] != nil }; files = records
-        DiskRecord.collect(root: root, keeping: Set(records.values))
+        if changed { DiskRecord.collect(root: root, keeping: Set(records.values)) }
+        if FileManager.default.fileExists(atPath: legacy.path) { try? FileManager.default.removeItem(at: legacy) }
     }
 }
 

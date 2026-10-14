@@ -19,7 +19,7 @@ struct BookSurface: View {
                 PencilSurface(pageID: store.spreadKey(start: pairStart), bookID: book.id,
                               drawing: store.spreadDrawing(start: pairStart),
                               sourceData: store.spreadData(start: pairStart),
-                              editing: !preview && store.isAnnotating && store.showInk,
+                              editing: !preview && !store.isPaginating && store.isAnnotating && store.showInk,
                               logicalSize: CGSize(width: width * 2, height: height), controls: controls,
                               onChange: store.saveSpreadDrawing)
                     .id("\(book.id):\(store.spreadKey(start: pairStart))")

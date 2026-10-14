@@ -32,15 +32,21 @@ enum ReaderSlideSymbols {
 }
 
 enum ReaderSlideText {
+    private static let fontCache = NSCache<NSString, UIFont>()
     static func font(_ family: String?, size: CGFloat, bold: Bool = false, italic: Bool = false) -> UIFont {
+        let key = "\(family ?? "Arial"):\(size):\(bold):\(italic)" as NSString
+        if let value = fontCache.object(forKey: key) { return value }
         let lower = (family ?? "Arial").lowercased()
         let name: String
         if lower.contains("symbol") || lower.contains("math") { name = "STIXTwoMath-Regular" }
         else if lower.contains("times") { name = "TimesNewRomanPS" + (bold && italic ? "-BoldItalicMT" : bold ? "-BoldMT" : italic ? "-ItalicMT" : "MT") }
-        else if lower.contains("宋") || lower.contains("ming") { return ReaderFont.serif(size: size) }
+        else if lower.contains("宋") || lower.contains("ming") {
+            let value = ReaderFont.serif(size: size); fontCache.countLimit = 512; fontCache.setObject(value, forKey: key); return value
+        }
         else if lower.contains("courier") { name = bold ? "CourierNewPS-BoldMT" : "CourierNewPSMT" }
         else { name = "Arial" + (bold && italic ? "-BoldItalicMT" : bold ? "-BoldMT" : italic ? "-ItalicMT" : "MT") }
-        return UIFont(name: family ?? "", size: size) ?? UIFont(name: name, size: size) ?? UIFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
+        let value = UIFont(name: family ?? "", size: size) ?? UIFont(name: name, size: size) ?? UIFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
+        fontCache.countLimit = 512; fontCache.setObject(value, forKey: key); return value
     }
     static func attributed(_ body: ReaderXML, defaults: ReaderXML?, fontScale: CGFloat, fonts: [String: String], color: (ReaderXML?) -> UIColor?) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")

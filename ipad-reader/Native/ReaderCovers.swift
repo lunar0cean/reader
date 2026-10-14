@@ -13,11 +13,11 @@ enum ReaderCovers {
     }
     static func firstPage(_ data: Data) -> Data? {
         autoreleasepool {
-            guard let page = PDFDocument(data: data)?.page(at: 0) else { return nil }
+            guard let document = PDFDocument(data: data), let page = document.page(at: 0) else { return nil }
             let rect = page.bounds(for: .cropBox)
             guard rect.width.isFinite, rect.height.isFinite, rect.width > 0, rect.height > 0 else { return nil }
             let scale = 640 / max(rect.width, rect.height)
-            return page.thumbnail(of: CGSize(width: max(1, rect.width * scale), height: max(1, rect.height * scale)), for: .cropBox).jpegData(compressionQuality: 0.88)
+            return withExtendedLifetime(document) { page.thumbnail(of: CGSize(width: max(1, rect.width * scale), height: max(1, rect.height * scale)), for: .cropBox).jpegData(compressionQuality: 0.88) }
         }
     }
     static func embeddedEPUB(_ data: Data) -> Data? {

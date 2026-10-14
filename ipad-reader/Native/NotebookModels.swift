@@ -104,6 +104,17 @@ struct NotebookDocument: Codable {
     var notebooks: [NotebookBook]
     var notebookID: String; var sectionID: String; var pageID: String
 
+    mutating func removeBook(_ id: String) {
+        notebooks.removeAll { $0.id == id }
+        if notebookID == id { normalizeSelection() }
+    }
+    mutating func normalizeSelection() {
+        let book = notebooks.first { $0.id == notebookID } ?? notebooks.first
+        let section = book?.sections.first { $0.id == sectionID } ?? book?.sections.first
+        let page = section?.pages.first { $0.id == pageID } ?? section?.pages.first
+        notebookID = book?.id ?? ""; sectionID = section?.id ?? ""; pageID = page?.id ?? ""
+    }
+
     /// Produce portable point lists only for an explicit export, never per stroke.
     func exportSnapshot() -> NotebookDocument {
         var snapshot = self
@@ -174,8 +185,12 @@ enum NotebookCodec {
         if let ink = page.inkData { guard ink.count <= 100 * 1024 * 1024, (try? PKDrawing(data: ink)) != nil else { throw ReaderFileError.invalid("原生笔迹数据损坏。") } }
     }
     static func validate(_ document: NotebookDocument) throws {
-        guard document.engine == "yejian-notebook-v1", document.version == 1, !document.notebooks.isEmpty,
+        guard document.engine == "yejian-notebook-v1", document.version == 1,
               document.notebooks.count <= 500 else { throw ReaderFileError.invalid("不是有效的笔记本备份。") }
+        if document.notebooks.isEmpty {
+            guard document.notebookID.isEmpty, document.sectionID.isEmpty, document.pageID.isEmpty else { throw ReaderFileError.invalid("空书库的笔记选择无效。") }
+            return
+        }
         var ids = Set<String>(), pages = 0
         for book in document.notebooks {
             guard !book.id.isEmpty, ids.insert(book.id).inserted, !book.sections.isEmpty, book.title.count <= 500,

@@ -2,8 +2,8 @@ import UIKit
 import ZIPFoundation
 
 enum ReaderSlides {
-    static let version = 2
-    static func book(data: Data, name: String) throws -> ReaderBook {
+    static let version = 3
+    static func book(data: Data, name: String, control: ReaderImportControl? = nil) throws -> ReaderBook {
         ReaderFont.register()
         let archive = try Archive(data: data, accessMode: .read)
         var total: UInt64 = 0, count = 0
@@ -12,18 +12,24 @@ enum ReaderSlides {
             guard count <= 10000, entry.uncompressedSize <= 20 * 1024 * 1024, total <= 100 * 1024 * 1024 - entry.uncompressedSize else { throw ReaderFileError.invalid("PPTX 解压内容过大。") }
             total += entry.uncompressedSize
         }
+        var resources: [String: Data] = [:], relationshipCache: [String: [String: String]] = [:]
         func read(_ path: String) throws -> Data {
+            try control?.check()
+            if let cached = resources[path] { return cached }
             guard let entry = archive[path], entry.type == .file else { throw ReaderFileError.invalid("PPTX 缺少 \(path)") }
-            var bytes = Data(); _ = try archive.extract(entry) { bytes.append($0) }; return bytes
+            var bytes = Data(); _ = try archive.extract(entry) { bytes.append($0) }
+            resources[path] = bytes; return bytes
         }
         func relationships(_ path: String) -> [String: String] {
+            if let cached = relationshipCache[path] { return cached }
             let parts = path.split(separator: "/")
             let rel = parts.dropLast().joined(separator: "/") + "/_rels/" + String(parts.last ?? "") + ".rels"
             guard let bytes = try? read(rel), let xml = try? ReaderXML.parse(bytes) else { return [:] }
-            return Dictionary(xml.descendants("Relationship").compactMap { node -> (String, String)? in
+            let result = Dictionary(xml.descendants("Relationship").compactMap { node -> (String, String)? in
                 guard node.attributes["TargetMode"] != "External", let id = node.attributes["Id"], let target = node.attributes["Target"], let resolved = ReaderImport.resourcePath(target, from: path) else { return nil }
                 return (id, resolved)
             }, uniquingKeysWith: { first, _ in first })
+            relationshipCache[path] = result; return result
         }
         let presentation = try ReaderXML.parse(read("ppt/presentation.xml")), links = relationships("ppt/presentation.xml")
         let slides = presentation.descendants("sldId").compactMap { $0.attributes["r:id"].flatMap { links[$0] } }
@@ -32,10 +38,19 @@ enum ReaderSlides {
         let size = CGSize(width: (Double(sz?.attributes["cx"] ?? "") ?? 12192000) / 12700, height: (Double(sz?.attributes["cy"] ?? "") ?? 6858000) / 12700)
         guard size.width >= 100, size.height >= 100, size.width <= 4000, size.height <= 4000 else { throw ReaderFileError.invalid("PPTX 页面尺寸无效。") }
         let renderer = SlideRenderer(read: read, relationships: relationships)
+        var failure: Error?
         let pdf = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: size)).pdfData { output in
-            for path in slides { output.beginPage(); renderer.draw(path, context: output.cgContext, size: size) }
+            for (index, path) in slides.enumerated() {
+                do { try control?.check() } catch { failure = error; break }
+                control?.progress("正在转换幻灯片 \(index + 1) / \(slides.count)…")
+                autoreleasepool { output.beginPage(); renderer.draw(path, context: output.cgContext, size: size) }
+            }
         }
-        var book = try ReaderImport.pdf(data: pdf, name: (name as NSString).deletingPathExtension + ".pdf")
+        if let failure { throw failure }; try control?.check()
+        var book = try ReaderImport.pdf(data: pdf, name: (name as NSString).deletingPathExtension + ".pdf", control: control, extractText: false)
+        // DrawingML text is available without asking PDFKit to lay out every
+        // vector equation. Actual PDF selection/TTS still uses each live PDFPage.
+        for index in slides.indices { book.chapters[index].paragraphs = [renderer.xml(slides[index])?.descendants("t").map(\.ownText).joined(separator: " ") ?? ""] }
         book.format = "PPTX"; book.original = data; book.originalName = name; book.renderedPDF = pdf; book.slideRendererVersion = version
         book.importWarnings = Array(renderer.warnings).sorted(); return book
     }
@@ -46,16 +61,29 @@ private final class SlideRenderer {
     let relationships: (String) -> [String: String]
     var warnings = Set<String>()
     var colors: [String: UIColor] = [:], fonts: [String: String] = [:], colorMap: [String: String] = [:]
-    var master: ReaderXML?, layout: ReaderXML?
+    var master: ReaderXML?, layout: ReaderXML?, theme: ReaderXML?
+    private var xmlCache: [String: ReaderXML] = [:]
+    private let imageCache = NSCache<NSString, UIImage>()
     init(read: @escaping (String) throws -> Data, relationships: @escaping (String) -> [String: String]) { self.read = read; self.relationships = relationships }
-    func xml(_ path: String?) -> ReaderXML? { guard let path, let bytes = try? read(path) else { return nil }; return try? ReaderXML.parse(bytes) }
+    func xml(_ path: String?) -> ReaderXML? {
+        guard let path else { return nil }; if let cached = xmlCache[path] { return cached }
+        guard let bytes = try? read(path), let parsed = try? ReaderXML.parse(bytes) else { return nil }
+        xmlCache[path] = parsed; return parsed
+    }
+    func image(_ path: String, data: Data) -> UIImage? {
+        if let image = imageCache.object(forKey: path as NSString) { return image }
+        guard let image = UIImage(data: data) else { return nil }
+        imageCache.totalCostLimit = 32 * 1024 * 1024
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? data.count
+        imageCache.setObject(image, forKey: path as NSString, cost: cost); return image
+    }
     func draw(_ path: String, context: CGContext, size: CGSize) {
         guard let slide = xml(path), let tree = slide.descendants("spTree").first else { return }
         let rels = relationships(path)
         let layoutPath = rels.values.first { $0.contains("slideLayouts/") }, layoutRels = layoutPath.map(relationships) ?? [:]
         let masterPath = layoutRels.values.first { $0.contains("slideMasters/") }, masterRels = masterPath.map(relationships) ?? [:]
         layout = xml(layoutPath); master = xml(masterPath)
-        let theme = xml(masterRels.values.first { $0.contains("theme/") })
+        theme = xml(masterRels.values.first { $0.contains("theme/") })
         colorMap = master?.descendants("clrMap").first?.attributes ?? [:]
         colors = ["lt1": .white, "dk1": .black, "lt2": .white, "dk2": .black]
         for item in theme?.descendants("clrScheme").first?.children ?? [] {
@@ -68,7 +96,8 @@ private final class SlideRenderer {
             }
         }
         let bg = slide.descendants("bg").first ?? layout?.descendants("bg").first ?? master?.descendants("bg").first
-        (color(bg?.descendants("solidFill").first) ?? .white).setFill(); context.fill(CGRect(origin: .zero, size: size))
+        UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
+        if let bg { paint(properties: bg.descendants("bgPr").first, reference: bg.descendants("bgRef").first, path: UIBezierPath(rect: CGRect(origin: .zero, size: size)), context: context) }
         let matrix = CGAffineTransform(scaleX: 1 / 12700, y: 1 / 12700)
         for (base, basePath) in [(master, masterPath), (layout, layoutPath)] {
             if let base, let basePath, let baseTree = base.descendants("spTree").first { children(baseTree, matrix: matrix, rels: relationships(basePath), context: context, skipPlaceholders: true, depth: 0) }
@@ -81,6 +110,31 @@ private final class SlideRenderer {
         if node.name == "schemeClr" { let name = node.attributes["val"] ?? "dk1"; value = colors[colorMap[name] ?? (name == "bg1" ? "lt1" : name == "tx1" ? "dk1" : name)] ?? .black }
         else { value = UIColor(notebookHex: "#" + (node.attributes["lastClr"] ?? node.attributes["val"] ?? "000000")) }
         if let alpha = node.descendants("alpha").first?.attributes["val"], let opacity = Double(alpha) { value = value.withAlphaComponent(CGFloat(max(0, min(1, opacity / 100000)))) }; return value
+    }
+    func paint(properties: ReaderXML?, reference: ReaderXML?, path: UIBezierPath, context: CGContext, groupFill: UIColor? = nil) {
+        if properties?.children.contains(where: { $0.name == "noFill" }) == true { return }
+        var fill = properties?.children.first { ["solidFill", "gradFill", "grpFill"].contains($0.name) }
+        let oldPlaceholder = colors["phClr"]
+        defer { colors["phClr"] = oldPlaceholder }
+        if fill == nil, let reference, let idx = Int(reference.attributes["idx"] ?? ""), idx > 0 {
+            colors["phClr"] = color(reference)
+            let list = theme?.descendants(idx >= 1001 ? "bgFillStyleLst" : "fillStyleLst").first?.children ?? []
+            let index = idx >= 1001 ? idx - 1001 : idx - 1
+            if list.indices.contains(index) { fill = list[index] }
+        }
+        if fill?.name == "grpFill", let groupFill { groupFill.setFill(); path.fill(); return }
+        if fill?.name == "gradFill" {
+            let stops = fill?.descendants("gs") ?? []
+            let values = stops.compactMap { color($0)?.cgColor }
+            let locations = stops.map { number($0, "pos") / 100000 }
+            guard values.count == stops.count, values.count >= 2,
+                  let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: values as CFArray, locations: locations) else { return }
+            let box = path.bounds, angle = number(fill?.descendants("lin").first, "ang") / 60000 * .pi / 180
+            let dx = cos(angle), dy = sin(angle), radius = (abs(dx) * box.width + abs(dy) * box.height) / 2
+            context.saveGState(); path.addClip()
+            context.drawLinearGradient(gradient, start: CGPoint(x: box.midX - dx * radius, y: box.midY - dy * radius), end: CGPoint(x: box.midX + dx * radius, y: box.midY + dy * radius), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            context.restoreGState()
+        } else if let value = color(fill) { value.setFill(); path.fill() }
     }
     func placeholder(_ shape: ReaderXML, in base: ReaderXML?) -> ReaderXML? {
         guard let ph = shape.descendants("ph").first else { return nil }
@@ -129,7 +183,7 @@ private final class SlideRenderer {
         if shape.name == "pic" {
             guard let embed = shape.descendants("blip").first?.attributes["r:embed"], let path = rels[embed], let data = try? read(path) else { return }
             if path.lowercased().hasSuffix(".wmf") { if !ReaderWMF.draw(data, into: box, context: context) { warnings.insert("有 WMF 图像包含尚不支持的内容，原文件已保留。") } }
-            else if let image = UIImage(data: data) {
+            else if let image = image(path, data: data) {
                 let crop = shape.descendants("srcRect").first
                 let l = number(crop, "l") / 100000, t = number(crop, "t") / 100000, r = number(crop, "r") / 100000, b = number(crop, "b") / 100000
                 guard 1 - l - r > 0, 1 - t - b > 0 else { return }; context.clip(to: box)
@@ -139,8 +193,7 @@ private final class SlideRenderer {
         }
         let props = shape.children.first { $0.name == "spPr" }, geom = props?.children.first { $0.name == "prstGeom" }?.attributes["prst"] ?? "rect"
         let path = shapePath(geom, box: box, properties: props)
-        let fill = color(props?.children.first { $0.name == "solidFill" }) ?? (props?.children.contains(where: { $0.name == "grpFill" }) == true ? groupFill : nil)
-        if geom != "line", let fill { fill.setFill(); path.fill() }
+        if geom != "line" { paint(properties: props, reference: shape.children.first { $0.name == "style" }?.children.first { $0.name == "fillRef" }, path: path, context: context, groupFill: groupFill) }
         if let line = props?.children.first(where: { $0.name == "ln" }), !line.children.contains(where: { $0.name == "noFill" }) {
             let ink = color(line.children.first { $0.name == "solidFill" }) ?? .black
             ink.setStroke(); path.lineWidth = max(0.4, number(line, "w", 9525) / 12700); path.stroke()
@@ -151,10 +204,13 @@ private final class SlideRenderer {
         }
         guard let body = shape.children.first(where: { $0.name == "txBody" }) else { return }
         let defaults = inherited?.descendants("defRPr").first ?? master?.descendants(shape.descendants("ph").first?.attributes["type"] == "title" ? "titleStyle" : "bodyStyle").first?.descendants("defRPr").first
-        let text = ReaderSlideText.attributed(body, defaults: defaults, fontScale: 1, fonts: fonts, color: color)
+        // Font sizes and insets are point values inside a group's coordinate
+        // system. Scaling only its shape rectangles caused wrapped equations.
+        let fontScale = max(0.01, min(100, hypot(matrix.c, matrix.d) * 12700))
+        let text = ReaderSlideText.attributed(body, defaults: defaults, fontScale: fontScale, fonts: fonts, color: color)
         guard text.length > 0 else { return }
         let pr = body.children.first { $0.name == "bodyPr" }
-        let l = number(pr, "lIns", 91440) / 12700, t = number(pr, "tIns", 45720) / 12700, r = number(pr, "rIns", 91440) / 12700, b = number(pr, "bIns", 45720) / 12700
+        let l = number(pr, "lIns", 91440) / 12700 * fontScale, t = number(pr, "tIns", 45720) / 12700 * fontScale, r = number(pr, "rIns", 91440) / 12700 * fontScale, b = number(pr, "bIns", 45720) / 12700 * fontScale
         var area = CGRect(x: box.minX + l, y: box.minY + t, width: max(1, box.width - l - r), height: max(1, box.height - t - b))
         if pr?.attributes["wrap"] == "none" { area.size.width = max(area.width, text.size().width + 1) }
         let h = text.boundingRect(with: CGSize(width: area.width, height: 10000), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height

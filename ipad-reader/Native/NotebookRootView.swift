@@ -24,6 +24,8 @@ struct NotebookRootView: View {
     @State private var shared: SharedExport?
     @State private var query = ""
     @State private var searching = false
+    @State private var deleteID: String?
+    @State private var deleteKind = "页面"
     private let purple = ReaderPalette.sage
     private let colors = ["#202124", "#36B9D4", "#67B33E", "#E47B35", "#8030A7", "#DD485E"]
 
@@ -63,6 +65,16 @@ struct NotebookRootView: View {
         .tint(purple).foregroundStyle(Color(white: 0.16)).preferredColorScheme(.light)
         .statusBar(hidden: focused)
         .sheet(isPresented: $showNaming) { nameForm.presentationDetents([.medium]) }
+        .alert("删除这个\(deleteKind)？", isPresented: Binding(get: { deleteID != nil }, set: { if !$0 { deleteID = nil } })) {
+            Button("取消", role: .cancel) { deleteID = nil }
+            Button("删除", role: .destructive) {
+                if let id = deleteID {
+                    controls.selection = nil
+                    if deleteKind == "页面" { store.deletePage(id) } else { store.deleteSection(id) }
+                }
+                deleteID = nil
+            }
+        } message: { Text("对应手写、文字和图片一并删除。删除最后一页或最后一个分区后会留下新的空白页。") }
         .sheet(isPresented: $showText) { textForm.presentationDetents([.medium, .large]) }
         .sheet(item: $shared) { ActivityShare(items: [$0.url]) }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.svg, .json, .image, .yejianNotebook]) { result in
@@ -181,11 +193,17 @@ struct NotebookRootView: View {
         HStack(spacing: 0) {
             if navigation == 2 {
                 column("分区", add: { naming("分区") }) {
-                    ForEach(store.book?.sections ?? []) { section in row(section.title, selected: section.id == store.document.sectionID) { store.select(bookID: store.document.notebookID, sectionID: section.id); controls.selection = nil } }
+                    ForEach(store.book?.sections ?? []) { section in
+                        row(section.title, selected: section.id == store.document.sectionID) { store.select(bookID: store.document.notebookID, sectionID: section.id); controls.selection = nil }
+                            .contextMenu { Button("删除分区", systemImage: "trash", role: .destructive) { deleteKind = "分区"; deleteID = section.id } }
+                    }
                 }
             }
             column("页面", add: { naming("页面") }) {
-                ForEach(store.section?.pages ?? []) { page in row(page.title, selected: page.id == store.document.pageID) { store.select(bookID: store.document.notebookID, sectionID: store.document.sectionID, pageID: page.id); controls.selection = nil } }
+                ForEach(store.section?.pages ?? []) { page in
+                    row(page.title, selected: page.id == store.document.pageID) { store.select(bookID: store.document.notebookID, sectionID: store.document.sectionID, pageID: page.id); controls.selection = nil }
+                        .contextMenu { Button("删除页面", systemImage: "trash", role: .destructive) { deleteKind = "页面"; deleteID = page.id } }
+                }
             }
         }.accessibilityIdentifier("notebook-navigation")
     }

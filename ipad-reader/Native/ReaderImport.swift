@@ -7,12 +7,13 @@ import SwiftSoup
 /// Importers retain the source bytes; rendered paragraphs never replace the original.
 enum ReaderImport {
     static let fileLimit = 50 * 1024 * 1024
-    static func file(data: Data, name: String) throws -> ReaderBook {
+    static func file(data: Data, name: String, control: ReaderImportControl? = nil) throws -> ReaderBook {
+        try control?.check()
         guard !data.isEmpty, data.count <= fileLimit else { throw ReaderFileError.invalid("文件为空或超过 50 MB。") }
         switch (name as NSString).pathExtension.lowercased() {
         case "epub": return try epub(data: data, name: name)
-        case "pdf": return try pdf(data: data, name: name)
-        case "pptx": return try ReaderSlides.book(data: data, name: name)
+        case "pdf": return try pdf(data: data, name: name, control: control)
+        case "pptx": return try ReaderSlides.book(data: data, name: name, control: control)
         case "ppt": throw ReaderFileError.invalid("旧版 .ppt 请先在 PowerPoint 导出为 PDF 或另存为 .pptx，再导入阅读器。")
         case "md", "markdown": return try ReaderMarkdown.book(data: data, name: name)
         case "html", "htm": return try article(data: data, name: name, source: nil)
@@ -25,16 +26,18 @@ enum ReaderImport {
         }
     }
 
-    static func pdf(data: Data, name: String) throws -> ReaderBook {
+    static func pdf(data: Data, name: String, control: ReaderImportControl? = nil, extractText: Bool = true) throws -> ReaderBook {
         guard let document = PDFDocument(data: data), !document.isLocked, document.pageCount > 0 else { throw ReaderFileError.invalid("PDF 无法打开或需要密码，请先解锁文件。") }
         guard document.pageCount <= 2000 else { throw ReaderFileError.invalid("本版支持 2000 页以内的 PDF。") }
-        let chapters = (0..<document.pageCount).map { index -> ReaderChapter in
-            let text = document.page(at: index).map(ReaderPDFText.source) ?? ""
+        let chapters = try (0..<document.pageCount).map { index -> ReaderChapter in
+            try control?.check()
+            control?.progress("正在读取 PDF 页码 \(index + 1) / \(document.pageCount)…")
+            let text = extractText ? autoreleasepool { document.page(at: index).map(ReaderPDFText.source) ?? "" } : ""
             return ReaderChapter(id: "pdf-\(index)", title: "第 \(index + 1) 页", paragraphs: [text])
         }
         let metadata = document.documentAttributes ?? [:]
         let title = (metadata[PDFDocumentAttribute.titleAttribute] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (name as NSString).deletingPathExtension
-        let scans = chapters.filter { $0.text.isEmpty }.count
+        let scans = extractText ? chapters.filter { $0.text.isEmpty }.count : 0
         var book = ReaderBook(id: UUID().uuidString, title: title, author: metadata[PDFDocumentAttribute.authorAttribute] as? String ?? "从此设备导入", format: "PDF", color: "clay", source: nil, chapters: chapters, original: data, originalName: name, importedAt: Date(), importWarnings: scans > 0 ? ["\(scans) 页没有可提取文字，仍可阅读和手写；文字检索需后续 OCR。"] : [], coverData: ReaderCovers.firstPage(data))
         book.pdfTextVersion = 2; return book
     }

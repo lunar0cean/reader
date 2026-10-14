@@ -83,7 +83,14 @@ struct ReaderRootView: View {
                     else if !focused { topbar.transition(.move(edge: .top)) }
                 }
             }
-            .overlay { if store.isImporting || notebooks.isImporting { ProgressView(notebooks.isImporting ? "正在导入笔记…" : store.importStatus).padding(24).background(ReaderPalette.panel, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white) } }
+            .overlay {
+                if store.isImporting || notebooks.isImporting {
+                    VStack(spacing: 16) {
+                        ProgressView(notebooks.isImporting ? "正在导入笔记…" : store.importStatus)
+                        if store.isImporting { Button("取消导入", action: store.cancelImport) }
+                    }.padding(24).background(ReaderPalette.panel, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if !focused && !showLibrary && !store.isAnnotating {
                     progressBar(start: start, spread: spread).transition(.move(edge: .bottom))
@@ -230,6 +237,7 @@ struct ReaderRootView: View {
     }
 
     private func toggleAnnotation() {
+        guard !store.isPaginating else { store.notice = "正在调整版式，请稍候再开始批注。"; return }
         withAnimation(.snappy(duration: 0.25)) {
             store.isAnnotating.toggle(); focused = store.isAnnotating
             if store.isAnnotating { store.showInk = true; inkToolbarCollapsed = false; inkStyleExpanded = false }
