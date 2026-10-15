@@ -248,6 +248,9 @@ final class ReaderXML: NSObject, XMLParserDelegate {
     static func parse(_ data: Data) throws -> ReaderXML {
         if (try? ReaderHTML.decode(data))?.contains("<!ENTITY") == true { throw ReaderFileError.invalid("EPUB XML 声明了不支持的实体。") }
         let root = ReaderXML(); root.stack = [root]
+        // The parsing stack contains root itself. Break that temporary cycle on
+        // both success and failure so repeated imports release their XML trees.
+        defer { root.stack.removeAll() }
         let parser = XMLParser(data: data); parser.shouldResolveExternalEntities = false; parser.delegate = root
         guard parser.parse() else { throw ReaderFileError.invalid("EPUB XML 结构无效。") }; return root
     }

@@ -46,6 +46,15 @@ final class ReaderV091Tests: XCTestCase {
         original.shelves?.removeCategory(category.id)
         XCTAssertEqual(original.books.count, 1); XCTAssertTrue(original.shelves?.assignments.isEmpty == true)
     }
+    func testImportXMLTreesReleaseAfterUse() throws {
+        weak var released: ReaderXML?
+        try autoreleasepool {
+            let tree = try ReaderXML.parse(Data("<root><value>content</value></root>".utf8))
+            released = tree
+            XCTAssertEqual(tree.descendants("value").first?.text, "content")
+        }
+        XCTAssertNil(released, "The parser's temporary stack must not retain the whole imported book")
+    }
     func testCancelledPPTDoesNotContinueRendering() throws {
         let data = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "sample-legacy-math", withExtension: "pptx")))
         let control = ReaderImportControl(); control.cancel()
