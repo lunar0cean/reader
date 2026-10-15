@@ -21,6 +21,7 @@ final class ReaderStore: ObservableObject {
     private lazy var progressWriter = ReaderProgressWriter(url: Self.storageURL, write: { [persistence] in try persistence.write($0, legacy: $1) })
     @Published var importStatus = ""
     @Published var isPaginating = false
+    @Published var documentStatus: String?
     private var paginationTask: Task<Void, Never>?
     private var recoveryBlocked = false
     private var inkCache: (String, [String: Data], [String: Data], Bool)?
@@ -29,6 +30,7 @@ final class ReaderStore: ObservableObject {
     private var paginationRevision = 0
     private var importControl: ReaderImportControl?
     private var importID: UUID?
+    private var rebuildControl: ReaderImportControl?
 
     private static var storageURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -115,16 +117,22 @@ final class ReaderStore: ObservableObject {
     func openBook(_ id: String) {
         guard let selected = backup.books.first(where: { $0.id == id }) else { return }
         paginationTask?.cancel(); layoutTask?.cancel(); layoutAnchor = nil; pages = []; referenceAnchor = nil; isAnnotating = false; isPaginating = true
+        rebuildControl?.cancel(); rebuildControl = nil; documentStatus = nil
         paginationRevision += 1; let revision = paginationRevision
         backup.currentBookID = id
         let layout = self.layout, target = readingState.pageIndex
         paginationTask = Task {
-            defer { if paginationRevision == revision { isPaginating = false } }
+            defer { if paginationRevision == revision { isPaginating = false; documentStatus = nil; rebuildControl = nil } }
             var current = selected
             if selected.format == "PPTX", selected.slideRendererVersion != ReaderSlides.version, let original = selected.original {
-                notice = "正在更新幻灯片显示…"
+                documentStatus = "正在更新幻灯片显示…"
+                let control = ReaderImportControl { [weak self] status in
+                    Task { @MainActor in if self?.paginationRevision == revision { self?.documentStatus = status } }
+                }
+                rebuildControl = control
                 do {
-                    let fresh = try await Task.detached(priority: .userInitiated) { try ReaderSlides.book(data: original, name: selected.originalName ?? "slides.pptx") }.value
+                    let fresh = try await Task.detached(priority: .userInitiated) { try ReaderSlides.book(data: original, name: selected.originalName ?? "slides.pptx", control: control) }.value
+                    try control.check()
                     guard !Task.isCancelled, backup.currentBookID == id else { return }
                     current.renderedPDF = fresh.renderedPDF; current.coverData = fresh.coverData; current.importWarnings = fresh.importWarnings; current.slideRendererVersion = ReaderSlides.version
                     current.pdfTextVersion = fresh.pdfTextVersion
@@ -134,9 +142,12 @@ final class ReaderStore: ObservableObject {
                         for index in current.chapters.indices { current.chapters[index].paragraphs = fresh.chapters[index].paragraphs }
                     }
                     if let index = backup.books.firstIndex(where: { $0.id == id }) { backup.books[index] = current }
+                    ReaderPDFImages.releaseCache()
                     notice = "幻灯片显示已更新"; scheduleSave()
-                } catch { notice = "暂时无法更新幻灯片：\(error.localizedDescription)" }
+                } catch is CancellationError { if !Task.isCancelled { notice = "已取消更新，继续使用已有页面。" } }
+                catch { notice = "暂时无法更新幻灯片：\(error.localizedDescription)" }
             }
+            guard !Task.isCancelled else { return }
             if current.format == "PDF", current.pdfTextVersion != 2, let original = current.original {
                 let source = current
                 let fresh = await Task.detached(priority: .userInitiated) { () -> ReaderBook in
@@ -163,7 +174,7 @@ final class ReaderStore: ObservableObject {
     }
     func deleteBook(_ id: String) {
         let selected = backup.currentBookID == id
-        if selected { paginationTask?.cancel(); layoutTask?.cancel(); paginationRevision += 1; pages = []; pageIndex = 0; isPaginating = false; isAnnotating = false; referenceAnchor = nil; speechHighlight = nil }
+        if selected { paginationTask?.cancel(); layoutTask?.cancel(); rebuildControl?.cancel(); documentStatus = nil; paginationRevision += 1; pages = []; pageIndex = 0; isPaginating = false; isAnnotating = false; referenceAnchor = nil; speechHighlight = nil }
         backup.removeBook(id); inkCache = nil
         ReaderPDF.releaseCache(); ReaderPDFImages.releaseCache()
         if selected, !backup.currentBookID.isEmpty { openBook(backup.currentBookID) }
@@ -389,6 +400,7 @@ final class ReaderStore: ObservableObject {
         }
     }
     func cancelImport() { importControl?.cancel(); importStatus = "正在停止导入…" }
+    func cancelDocumentUpdate() { rebuildControl?.cancel(); documentStatus = "正在停止更新…" }
 
     func importArticle(_ text: String) async -> Bool {
         guard !isImporting else { return false }; isImporting = true

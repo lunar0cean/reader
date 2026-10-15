@@ -74,17 +74,17 @@ final class ReaderV09Tests: XCTestCase {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "sample-legacy-math", withExtension: "pptx"))
         let book = try ReaderSlides.book(data: Data(contentsOf: url), name: "regression.pptx")
         XCTAssertEqual(book.slideRendererVersion, ReaderSlides.version); XCTAssertEqual(book.chapters.count, 2)
-        let pdf = try XCTUnwrap(PDFDocument(data: XCTUnwrap(book.renderedPDF))), text = pdf.page(at: 0)?.string ?? ""
+        let pdf = try XCTUnwrap(PDFDocument(data: XCTUnwrap(book.renderedPDF))), text = pdf.page(at: 0).map(ReaderPDFText.source) ?? ""
         XCTAssertTrue(text.contains("Steady-state")); XCTAssertTrue(text.contains("Output")); XCTAssertTrue(text.contains("stability"))
         XCTAssertTrue(text.contains("→")); XCTAssertTrue(text.contains("∞")); XCTAssertTrue(text.contains("⇒"))
         XCTAssertFalse(text.unicodeScalars.contains { (0xF000...0xF0FF).contains($0.value) })
-        XCTAssertTrue((pdf.page(at: 1)?.string ?? "").contains("⋯"), "MT Extra ellipsis must not become a Greek letter")
+        XCTAssertTrue((pdf.page(at: 1).map(ReaderPDFText.source) ?? "").contains("⋯"), "MT Extra ellipsis must not become a Greek letter")
         for i in 0..<2 {
             let image = try XCTUnwrap(pdf.page(at: i)?.thumbnail(of: CGSize(width: 1000, height: 750), for: .cropBox))
             let attachment = XCTAttachment(image: image); attachment.name = "legacy-slide-\(i + 1)"; attachment.lifetime = .keepAlways; add(attachment)
             if i == 0 {
                 let cg = try XCTUnwrap(image.cgImage)
-                // Both original white labels rely on the containing group's blue fill.
+                // The grouped white labels must keep both their blue fill and visible text.
                 for region in [CGRect(x: 0.59, y: 0.86, width: 0.14, height: 0.06), CGRect(x: 0.09, y: 0.84, width: 0.18, height: 0.08)] {
                     let crop = try XCTUnwrap(cg.cropping(to: region.applying(CGAffineTransform(scaleX: CGFloat(cg.width), y: CGFloat(cg.height)))))
                     var bytes = [UInt8](repeating: 255, count: crop.width * crop.height * 4)
@@ -94,6 +94,8 @@ final class ReaderV09Tests: XCTestCase {
                     }
                     let blue = stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] < 50 && bytes[$0 + 1] < 50 && bytes[$0 + 2] > 80 }.count
                     XCTAssertGreaterThan(blue, crop.width * crop.height / 3, "White labels need visible blue backgrounds")
+                    let white = stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 220 && bytes[$0 + 1] > 220 && bytes[$0 + 2] > 220 }.count
+                    XCTAssertGreaterThan(white, crop.width * crop.height / 40, "Grouped labels must not be enlarged outside the visible page")
                 }
             }
         }

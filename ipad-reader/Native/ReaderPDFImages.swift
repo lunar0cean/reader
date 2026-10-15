@@ -8,7 +8,7 @@ enum ReaderPDFImages {
     private static let cache = NSCache<NSString, Boxes>()
     static func releaseCache() { cache.removeAllObjects() }
     static func rectangles(book: ReaderBook, index: Int) -> [CGRect] {
-        let key = "\(book.id):\(index)" as NSString
+        let key = "\(book.id):\(book.slideRendererVersion ?? 0):\(index)" as NSString
         if let hit = cache.object(forKey: key) { return hit.values }
         guard let ref = ReaderPDF.document(book)?.page(at: index)?.pageRef else { return [] }
         let content = CGPDFContentStreamCreateWithPage(ref)

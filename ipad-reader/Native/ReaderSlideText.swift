@@ -48,6 +48,12 @@ enum ReaderSlideText {
         let value = UIFont(name: family ?? "", size: size) ?? UIFont(name: name, size: size) ?? UIFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
         fontCache.countLimit = 512; fontCache.setObject(value, forKey: key); return value
     }
+    static func autoFitScale(_ bodyPr: ReaderXML?) -> CGFloat {
+        guard let raw = bodyPr?.children.first(where: { $0.name == "normAutofit" })?.attributes["fontScale"] else { return 1 }
+        let percentage = raw.hasSuffix("%")
+        guard let value = Double(percentage ? String(raw.dropLast()) : raw) else { return 1 }
+        return CGFloat(max(0.01, min(1, value / (percentage ? 100 : 100000))))
+    }
     static func attributed(_ body: ReaderXML, defaults: ReaderXML?, fontScale: CGFloat, fonts: [String: String], color: (ReaderXML?) -> UIColor?) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         for paragraph in body.children where paragraph.name == "p" {
@@ -70,7 +76,21 @@ enum ReaderSlideText {
                 if let offset = Double(attr("baseline") ?? "") { attributes[.baselineOffset] = size * offset / 100000 }
                 if let spacing = Double(attr("spc") ?? "") { attributes[.kern] = spacing / 100 * Double(fontScale) }
                 if attr("u") != nil, attr("u") != "none" { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-                result.append(NSAttributedString(string: value, attributes: attributes))
+                let rendered = NSMutableAttributedString(string: value, attributes: attributes)
+                if symbol.lowercased() == "symbol" {
+                    // Select the math font explicitly for decoded glyphs. Font
+                    // fallback paints them, but can omit their PDF Unicode map.
+                    var location = 0
+                    for scalar in raw.unicodeScalars {
+                        let decoded = ReaderSlideSymbols.text(String(scalar), typeface: symbol)
+                        let length = (decoded as NSString).length
+                        if (0xF000...0xF0FF).contains(scalar.value) {
+                            rendered.addAttribute(.font, value: font("STIXTwoMath-Regular", size: size), range: NSRange(location: location, length: length))
+                        }
+                        location += length
+                    }
+                }
+                result.append(rendered)
             }
             let style = NSMutableParagraphStyle()
             switch p?.attributes["algn"] ?? listDefault?.attributes["algn"] { case "ctr": style.alignment = .center; case "r": style.alignment = .right; case "just": style.alignment = .justified; default: style.alignment = .left }

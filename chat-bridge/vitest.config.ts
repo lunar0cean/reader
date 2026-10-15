@@ -7,6 +7,7 @@ export default defineConfig({
     miniflare: { bindings: {
       TEST_MIGRATIONS: await readD1Migrations('./migrations'),
       PUBLIC_ORIGIN: 'https://bridge.example.com',
+      OWNER_GITHUB_LOGIN: 'lunar0cean',
       GITHUB_CLIENT_ID: 'test-client', GITHUB_CLIENT_SECRET: 'test-only-secret',
     } },
   })],

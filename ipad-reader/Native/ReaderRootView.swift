@@ -89,6 +89,11 @@ struct ReaderRootView: View {
                         ProgressView(notebooks.isImporting ? "正在导入笔记…" : store.importStatus)
                         if store.isImporting { Button("取消导入", action: store.cancelImport) }
                     }.padding(24).background(ReaderPalette.panel, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white)
+                } else if !showLibrary, let status = store.documentStatus {
+                    VStack(spacing: 16) { ProgressView(status); Button("取消更新", action: store.cancelDocumentUpdate) }
+                        .padding(24).background(ReaderPalette.panel, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white)
+                } else if !showLibrary && store.isPaginating && store.pages.isEmpty {
+                    ProgressView("正在排版…").padding(20).background(ReaderPalette.panel, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.white)
                 }
             }
             .overlay(alignment: .bottom) {

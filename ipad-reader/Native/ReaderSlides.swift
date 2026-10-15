@@ -204,13 +204,14 @@ private final class SlideRenderer {
         }
         guard let body = shape.children.first(where: { $0.name == "txBody" }) else { return }
         let defaults = inherited?.descendants("defRPr").first ?? master?.descendants(shape.descendants("ph").first?.attributes["type"] == "title" ? "titleStyle" : "bodyStyle").first?.descendants("defRPr").first
-        // Font sizes and insets are point values inside a group's coordinate
-        // system. Scaling only its shape rectangles caused wrapped equations.
-        let fontScale = max(0.01, min(100, hypot(matrix.c, matrix.d) * 12700))
+        // sz is stored in hundredths of a point, independently of chExt's
+        // arbitrary group coordinates (legacy PPT groups can use 1/8 pt units).
+        // Applying the geometry matrix to sz magnified these labels 100 times.
+        let pr = body.children.first { $0.name == "bodyPr" }
+        let fontScale = ReaderSlideText.autoFitScale(pr)
         let text = ReaderSlideText.attributed(body, defaults: defaults, fontScale: fontScale, fonts: fonts, color: color)
         guard text.length > 0 else { return }
-        let pr = body.children.first { $0.name == "bodyPr" }
-        let l = number(pr, "lIns", 91440) / 12700 * fontScale, t = number(pr, "tIns", 45720) / 12700 * fontScale, r = number(pr, "rIns", 91440) / 12700 * fontScale, b = number(pr, "bIns", 45720) / 12700 * fontScale
+        let l = number(pr, "lIns", 91440) / 12700, t = number(pr, "tIns", 45720) / 12700, r = number(pr, "rIns", 91440) / 12700, b = number(pr, "bIns", 45720) / 12700
         var area = CGRect(x: box.minX + l, y: box.minY + t, width: max(1, box.width - l - r), height: max(1, box.height - t - b))
         if pr?.attributes["wrap"] == "none" { area.size.width = max(area.width, text.size().width + 1) }
         let h = text.boundingRect(with: CGSize(width: area.width, height: 10000), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height
